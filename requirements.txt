@@ -12,3 +12,9 @@ langchain-openai
 langchain-core
 fastapi[all]
 tavily-python
+pymongo
+motor
+passlib[bcrypt]
+python-jose[cryptography]
+python-multipart
+bcrypt==4.0.1

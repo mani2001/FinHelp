@@ -1,18 +1,66 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import './App.css';
+import Auth from './Auth';
 
 function App() {
+  const [user, setUser] = useState(null);
+  const [token, setToken] = useState(null);
   const [activeTab, setActiveTab] = useState('chat');
   
-  // Shared state for earnings context - now an ARRAY
+  // Lift all chat state to App level so it persists across tab switches
   const [earningsContexts, setEarningsContexts] = useState([]);
+  const [conversation, setConversation] = useState([]);
+  const [currentSessionId, setCurrentSessionId] = useState(null);
 
+  // Check for existing session on mount
+  useEffect(() => {
+    const savedToken = localStorage.getItem('token');
+    const savedUser = localStorage.getItem('user');
+
+    if (savedToken && savedUser) {
+      setToken(savedToken);
+      setUser(JSON.parse(savedUser));
+    }
+  }, []);
+
+  const handleLoginSuccess = (userData, accessToken) => {
+    setUser(userData);
+    setToken(accessToken);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    
+    setUser(null);
+    setToken(null);
+    setEarningsContexts([]);
+    setConversation([]);
+    setCurrentSessionId(null);
+  };
+
+  // If not logged in, show auth screen
+  if (!user || !token) {
+    return <Auth onLoginSuccess={handleLoginSuccess} />;
+  }
+
+  // If logged in, show main app
   return (
     <div className="App">
       <div className="container">
         <header className="header">
-          <h1>📊 Finance AI Assistant</h1>
-          <p className="subtitle">Your intelligent finance companion</p>
+          <div className="header-content">
+            <div>
+              <h1>📊 Finance AI Assistant</h1>
+              <p className="subtitle">Your intelligent finance companion</p>
+            </div>
+            <div className="user-section">
+              <span className="user-name">👤 {user.name}</span>
+              <button className="logout-button" onClick={handleLogout}>
+                Logout
+              </button>
+            </div>
+          </div>
         </header>
 
         <div className="tabs">
@@ -31,36 +79,185 @@ function App() {
         </div>
 
         {activeTab === 'chat' ? (
-          <FinanceChat earningsContexts={earningsContexts} setEarningsContexts={setEarningsContexts} />
+          <FinanceChat 
+            earningsContexts={earningsContexts}
+            setEarningsContexts={setEarningsContexts}
+            conversation={conversation}
+            setConversation={setConversation}
+            currentSessionId={currentSessionId}
+            setCurrentSessionId={setCurrentSessionId}
+            token={token}
+          />
         ) : (
-          <EarningsAnalyzer setActiveTab={setActiveTab} earningsContexts={earningsContexts} setEarningsContexts={setEarningsContexts} />
+          <EarningsAnalyzer 
+            setActiveTab={setActiveTab} 
+            earningsContexts={earningsContexts} 
+            setEarningsContexts={setEarningsContexts} 
+          />
         )}
       </div>
     </div>
   );
 }
 
-// Finance Chat Component
-function FinanceChat({ earningsContexts, setEarningsContexts }) {
+// Finance Chat Component - now receives state as props
+function FinanceChat({ 
+  earningsContexts, 
+  setEarningsContexts, 
+  conversation, 
+  setConversation,
+  currentSessionId,
+  setCurrentSessionId,
+  token 
+}) {
   const [message, setMessage] = useState('');
-  const [conversation, setConversation] = useState([]);
   const [loading, setLoading] = useState(false);
   const [lastContextCount, setLastContextCount] = useState(0);
+  
+  const [chatHistory, setChatHistory] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
-  // When new earnings context is added, announce it
-  React.useEffect(() => {
+  const saveChatToBackend = useCallback(async () => {
+    if (conversation.length === 0) return;
+
+    try {
+      console.log('💾 Saving chat...');
+      
+      const url = currentSessionId 
+        ? `http://127.0.0.1:8000/api/chat/save?session_id=${currentSessionId}`
+        : 'http://127.0.0.1:8000/api/chat/save';
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          messages: conversation,
+          earnings_contexts: earningsContexts
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (!currentSessionId) {
+          setCurrentSessionId(data.session_id);
+        }
+        console.log('✅ Chat saved');
+      }
+    } catch (err) {
+      console.error('❌ Failed to save chat:', err);
+    }
+  }, [conversation, earningsContexts, token, currentSessionId, setCurrentSessionId]);
+
+  const loadChatHistory = useCallback(async () => {
+    setLoadingHistory(true);
+    try {
+      const response = await fetch('http://127.0.0.1:8000/api/chat/history?limit=5', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setChatHistory(data.sessions);
+      }
+    } catch (err) {
+      console.error('Failed to load history:', err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    loadChatHistory();
+  }, [loadChatHistory]);
+
+  const loadChatSession = async (sessionId) => {
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/api/chat/session/${sessionId}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setConversation(data.messages);
+        setEarningsContexts(data.earnings_contexts || []);
+        setLastContextCount(data.earnings_contexts?.length || 0);
+        setCurrentSessionId(sessionId);
+        setShowHistory(false);
+      }
+    } catch (err) {
+      console.error('Failed to load session:', err);
+    }
+  };
+
+  const deleteChatSession = async (sessionId, e) => {
+    e.stopPropagation();
+    
+    if (!window.confirm('Delete this chat?')) return;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/api/chat/session/${sessionId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (response.ok) {
+        console.log('✅ Session deleted');
+        loadChatHistory();
+      } else {
+        console.error('Delete failed:', await response.text());
+      }
+    } catch (err) {
+      console.error('Failed to delete session:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (conversation.length === 0) return;
+
+    const saveInterval = setInterval(() => {
+      saveChatToBackend();
+    }, 30000);
+
+    return () => clearInterval(saveInterval);
+  }, [conversation, earningsContexts, token, saveChatToBackend]);
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (conversation.length > 0) {
+        saveChatToBackend();
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [conversation, earningsContexts, token, saveChatToBackend]);
+
+  useEffect(() => {
     if (earningsContexts.length > lastContextCount) {
       const newContext = earningsContexts[earningsContexts.length - 1];
       const contextList = earningsContexts.map(c => `${c.ticker} ${c.quarter} ${c.year}`).join(', ');
       
       const initialMessage = {
         role: 'assistant',
-        content: `✅ Added ${newContext.ticker} ${newContext.quarter} ${newContext.year} earnings call to our discussion.\n\n${earningsContexts.length > 1 ? `I now have ${earningsContexts.length} earnings calls loaded: ${contextList}` : ''}\n\nYou can ask me:\n• Specific questions about ${newContext.ticker}\n• Comparisons between companies\n• Trends across quarters\n\nWhat would you like to know?`
+        content: `✅ Added ${newContext.ticker} ${newContext.quarter} ${newContext.year} earnings call.\n\n${earningsContexts.length > 1 ? `Loaded: ${contextList}` : ''}\n\nAsk me anything about it!`
       };
       
-      setConversation([...conversation, initialMessage]);
+      setConversation(prev => [...prev, initialMessage]);
       setLastContextCount(earningsContexts.length);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [earningsContexts]);
 
   const handleSend = async () => {
@@ -83,17 +280,10 @@ function FinanceChat({ earningsContexts, setEarningsContexts }) {
         conversation: conversation
       };
 
-      // If we have earnings contexts, use special endpoint
       if (earningsContexts.length > 0) {
         endpoint = 'http://127.0.0.1:8000/api/multi-earnings-chat';
         body = {
-          earnings_contexts: earningsContexts.map(ctx => ({
-            ticker: ctx.ticker,
-            quarter: ctx.quarter,
-            year: ctx.year,
-            transcript_content: ctx.transcript_content,
-            summary: ctx.summary
-          })),
+          earnings_contexts: earningsContexts,
           message: userMessage,
           conversation: conversation
         };
@@ -124,11 +314,16 @@ function FinanceChat({ earningsContexts, setEarningsContexts }) {
     }
   };
 
-  const handleNewChat = () => {
+  const handleNewChat = async () => {
+    await saveChatToBackend();
+    
     setConversation([]);
     setMessage('');
-    setEarningsContexts([]); // Clear all earnings contexts
+    setEarningsContexts([]);
     setLastContextCount(0);
+    setCurrentSessionId(null);
+    
+    loadChatHistory();
   };
 
   const removeContext = (index) => {
@@ -136,10 +331,9 @@ function FinanceChat({ earningsContexts, setEarningsContexts }) {
     setEarningsContexts(newContexts);
     setLastContextCount(newContexts.length);
     
-    // Add message about removal
     const removed = earningsContexts[index];
-    setConversation([
-      ...conversation,
+    setConversation(prev => [
+      ...prev,
       {
         role: 'assistant',
         content: `Removed ${removed.ticker} ${removed.quarter} ${removed.year} from discussion.`
@@ -148,95 +342,141 @@ function FinanceChat({ earningsContexts, setEarningsContexts }) {
   };
 
   return (
-    <div className="chat-container">
-      <div className="chat-description">
-        {earningsContexts.length > 0 ? (
-          <div className="earnings-context-banner">
-            <div className="context-list">
-              <strong>📊 Loaded Earnings:</strong>
-              <div className="context-chips">
-                {earningsContexts.map((ctx, idx) => (
-                  <div key={idx} className="context-chip">
-                    {ctx.ticker} {ctx.quarter} {ctx.year}
-                    <button onClick={() => removeContext(idx)}>✕</button>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <button className="clear-all-btn" onClick={() => {
-              setEarningsContexts([]);
-              setLastContextCount(0);
-            }}>
-              Clear All
-            </button>
-          </div>
+    <div className="chat-layout">
+      <div className={`history-sidebar ${showHistory ? 'open' : ''}`}>
+        <div className="history-header">
+          <h3>💬 Chats</h3>
+          <button onClick={loadChatHistory} title="Refresh">🔄</button>
+        </div>
+
+        {loadingHistory ? (
+          <div className="history-loading">Loading...</div>
+        ) : chatHistory.length === 0 ? (
+          <div className="history-empty">No saved chats</div>
         ) : (
-          <p>Ask me anything about finance, companies, markets, or economic concepts. I'll use real-time data to give you accurate answers.</p>
+          <div className="history-list">
+            {chatHistory.map((session) => (
+              <div 
+                key={session.id} 
+                className="history-item"
+                onClick={() => loadChatSession(session.id)}
+              >
+                <div className="history-preview">
+                  {session.preview || 'Empty'}
+                </div>
+                <div className="history-meta">
+                  <span>{session.message_count} msgs</span>
+                  <button 
+                    className="delete-session"
+                    onClick={(e) => deleteChatSession(session.id, e)}
+                    title="Delete"
+                  >
+                    🗑️
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
-      {conversation.length > 0 && (
-        <div className="chat-messages">
-          {conversation.map((msg, idx) => (
-            <div key={idx} className={`message ${msg.role}`}>
-              <div className="message-label">
-                {msg.role === 'user' ? '👤 You' : '🤖 Assistant'}
-              </div>
-              <div className="message-content">
-                {msg.content}
-              </div>
-              {msg.sources && msg.sources.length > 0 && (
-                <div className="message-sources">
-                  <strong>📚 Sources:</strong>
-                  {msg.sources.map((source, i) => (
-                    <a key={i} href={source} target="_blank" rel="noopener noreferrer">
-                      {source}
-                    </a>
+      <button 
+        className="history-toggle-btn"
+        onClick={() => setShowHistory(!showHistory)}
+        title={showHistory ? 'Hide' : 'Show History'}
+      >
+        {showHistory ? '◀' : '▶'}
+      </button>
+
+      <div className="chat-container">
+        <div className="chat-description">
+          {earningsContexts.length > 0 ? (
+            <div className="earnings-context-banner">
+              <div className="context-list">
+                <strong>📊 Loaded Earnings:</strong>
+                <div className="context-chips">
+                  {earningsContexts.map((ctx, idx) => (
+                    <div key={idx} className="context-chip">
+                      {ctx.ticker} {ctx.quarter} {ctx.year}
+                      <button onClick={() => removeContext(idx)}>✕</button>
+                    </div>
                   ))}
                 </div>
-              )}
+              </div>
+              <button className="clear-all-btn" onClick={() => {
+                setEarningsContexts([]);
+                setLastContextCount(0);
+              }}>
+                Clear All
+              </button>
             </div>
-          ))}
+          ) : (
+            <p>Ask me anything about finance, companies, markets, or economic concepts.</p>
+          )}
         </div>
-      )}
 
-      {loading && (
-        <div className="loading-inline">
-          <div className="spinner-small"></div>
-          <span>Thinking...</span>
-        </div>
-      )}
-
-      <div className="chat-input-section">
-        <div className="input-with-button">
-          <input
-            type="text"
-            placeholder={earningsContexts.length > 0 ? "Ask about loaded earnings or compare them..." : "Ask about finance, companies, markets..."}
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && !loading && handleSend()}
-            disabled={loading}
-          />
-          <button 
-            className="send-button"
-            onClick={handleSend}
-            disabled={loading || !message.trim()}
-          >
-            {loading ? '⏳' : '📤'}
-          </button>
-        </div>
-        
         {conversation.length > 0 && (
-          <button className="new-chat-button" onClick={handleNewChat}>
-            🔄 New Chat
-          </button>
+          <div className="chat-messages">
+            {conversation.map((msg, idx) => (
+              <div key={idx} className={`message ${msg.role}`}>
+                <div className="message-label">
+                  {msg.role === 'user' ? '👤 You' : '🤖 Assistant'}
+                </div>
+                <div className="message-content">
+                  {msg.content}
+                </div>
+                {msg.sources && msg.sources.length > 0 && (
+                  <div className="message-sources">
+                    <strong>📚 Sources:</strong>
+                    {msg.sources.map((source, i) => (
+                      <a key={i} href={source} target="_blank" rel="noopener noreferrer">
+                        {source}
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         )}
+
+        {loading && (
+          <div className="loading-inline">
+            <div className="spinner-small"></div>
+            <span>Thinking...</span>
+          </div>
+        )}
+
+        <div className="chat-input-section">
+          <div className="input-with-button">
+            <input
+              type="text"
+              placeholder="Ask about finance, companies, markets..."
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && !loading && handleSend()}
+              disabled={loading}
+            />
+            <button 
+              className="send-button"
+              onClick={handleSend}
+              disabled={loading || !message.trim()}
+            >
+              {loading ? '⏳' : '📤'}
+            </button>
+          </div>
+          
+          {conversation.length > 0 && (
+            <button className="new-chat-button" onClick={handleNewChat}>
+              🔄 New Chat
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-// Earnings Analyzer Component
 function EarningsAnalyzer({ setActiveTab, earningsContexts, setEarningsContexts }) {
   const [ticker, setTicker] = useState('');
   const [year, setYear] = useState('2024');
@@ -251,7 +491,7 @@ function EarningsAnalyzer({ setActiveTab, earningsContexts, setEarningsContexts 
 
   const handleAnalyze = async () => {
     if (!ticker.trim()) {
-      setError('Please enter a ticker symbol');
+      setError('Please enter a ticker');
       return;
     }
 
@@ -262,9 +502,7 @@ function EarningsAnalyzer({ setActiveTab, earningsContexts, setEarningsContexts 
     try {
       const response = await fetch('http://127.0.0.1:8000/api/earnings-analyze', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ticker: ticker.toUpperCase(),
           quarter: quarter,
@@ -272,13 +510,10 @@ function EarningsAnalyzer({ setActiveTab, earningsContexts, setEarningsContexts 
         })
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to analyze earnings');
-      }
+      if (!response.ok) throw new Error('Failed to analyze');
 
       const data = await response.json();
       setResult(data);
-
     } catch (err) {
       setError(err.message);
     } finally {
@@ -287,18 +522,16 @@ function EarningsAnalyzer({ setActiveTab, earningsContexts, setEarningsContexts 
   };
 
   const handleChatAboutThis = () => {
-    // Check if this earnings is already loaded
     const alreadyLoaded = earningsContexts.some(
       ctx => ctx.ticker === result.ticker && ctx.quarter === result.quarter && ctx.year === result.year
     );
 
     if (alreadyLoaded) {
-      alert('This earnings call is already loaded in chat!');
+      alert('Already loaded!');
       setActiveTab('chat');
       return;
     }
 
-    // ADD to earnings contexts (don't replace)
     setEarningsContexts([
       ...earningsContexts,
       {
@@ -310,29 +543,22 @@ function EarningsAnalyzer({ setActiveTab, earningsContexts, setEarningsContexts 
       }
     ]);
     
-    // Switch to chat tab
     setActiveTab('chat');
-  };
-
-  const handleReset = () => {
-    setResult(null);
-    setError(null);
-    setTicker('');
   };
 
   return (
     <div className="earnings-container">
       <div className="earnings-description">
-        <p>Get detailed AI-powered summaries of earnings calls. Select a company and time period.</p>
+        <p>Get AI-powered earnings summaries. Select company and period.</p>
       </div>
 
       <div className="earnings-form">
         <div className="form-row">
           <div className="form-group">
-            <label>Company Ticker</label>
+            <label>Ticker</label>
             <input
               type="text"
-              placeholder="e.g., AAPL, MSFT, TSLA"
+              placeholder="AAPL, MSFT..."
               value={ticker}
               onChange={(e) => setTicker(e.target.value.toUpperCase())}
               disabled={loading || result}
@@ -343,107 +569,59 @@ function EarningsAnalyzer({ setActiveTab, earningsContexts, setEarningsContexts 
         <div className="form-row two-columns">
           <div className="form-group">
             <label>Quarter</label>
-            <select 
-              value={quarter} 
-              onChange={(e) => setQuarter(e.target.value)}
-              disabled={loading || result}
-            >
-              {quarters.map(q => (
-                <option key={q} value={q}>{q}</option>
-              ))}
+            <select value={quarter} onChange={(e) => setQuarter(e.target.value)} disabled={loading || result}>
+              {quarters.map(q => <option key={q} value={q}>{q}</option>)}
             </select>
           </div>
 
           <div className="form-group">
             <label>Year</label>
-            <select 
-              value={year} 
-              onChange={(e) => setYear(e.target.value)}
-              disabled={loading || result}
-            >
-              {years.map(y => (
-                <option key={y} value={y}>{y}</option>
-              ))}
+            <select value={year} onChange={(e) => setYear(e.target.value)} disabled={loading || result}>
+              {years.map(y => <option key={y} value={y}>{y}</option>)}
             </select>
           </div>
         </div>
 
         {!result && (
-          <button 
-            className="analyze-button-earnings"
-            onClick={handleAnalyze}
-            disabled={!ticker || loading}
-          >
-            {loading ? '⏳ Analyzing...' : '📊 Analyze Earnings Call'}
+          <button className="analyze-button-earnings" onClick={handleAnalyze} disabled={!ticker || loading}>
+            {loading ? '⏳ Analyzing...' : '📊 Analyze'}
           </button>
         )}
 
         {result && (
-          <button 
-            className="analyze-button-earnings reset"
-            onClick={handleReset}
-          >
+          <button className="analyze-button-earnings reset" onClick={() => { setResult(null); setTicker(''); }}>
             🔄 Analyze Another
           </button>
         )}
       </div>
 
-      {loading && (
-        <div className="earnings-loading">
-          <div className="spinner"></div>
-          <p>Searching for earnings transcript...</p>
-        </div>
-      )}
-
-      {error && (
-        <div className="error-box-earnings">
-          <p>❌ {error}</p>
-        </div>
-      )}
+      {loading && <div className="earnings-loading"><div className="spinner"></div><p>Searching...</p></div>}
+      {error && <div className="error-box-earnings"><p>❌ {error}</p></div>}
 
       {result && !loading && (
         <div className="earnings-result">
-          <h2>📈 {result.ticker} {result.time_period} Earnings</h2>
+          <h2>📈 {result.ticker} {result.time_period}</h2>
           
           {result.error ? (
-            <div className="error-message">
-              <p>{result.error}</p>
-            </div>
+            <div className="error-message"><p>{result.error}</p></div>
           ) : (
             <>
               <div className="summary-box">
                 <h3>Summary</h3>
-                <div className="summary-text">
-                  {result.summary}
-                </div>
+                <div className="summary-text">{result.summary}</div>
               </div>
 
               <button className="chat-about-button" onClick={handleChatAboutThis}>
-                💬 Add to Chat & Discuss
+                💬 Add to Chat
               </button>
 
               {result.source_url && (
                 <div className="source-box">
                   <h3>📚 Source</h3>
-                  <a 
-                    href={result.source_url} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                  >
+                  <a href={result.source_url} target="_blank" rel="noopener noreferrer">
                     {result.source_url}
                   </a>
                 </div>
-              )}
-
-              {result.steps && result.steps.length > 0 && (
-                <details className="steps-details">
-                  <summary>🔧 Processing Steps</summary>
-                  <ul>
-                    {result.steps.map((step, idx) => (
-                      <li key={idx}>{step}</li>
-                    ))}
-                  </ul>
-                </details>
               )}
             </>
           )}
