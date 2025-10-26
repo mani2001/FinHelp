@@ -145,13 +145,14 @@ async def run_earnings_analysis(ticker: str, quarter: str, year: str) -> dict:
     final_state = await earnings_agent.ainvoke(initial_state)
     
     return {
-        "ticker": final_state["ticker"],
-        "quarter": final_state["quarter"],
-        "year": final_state["year"],
-        "time_period": f"{final_state['quarter']} {final_state['year']}",
-        "summary": final_state.get("summary", ""),
-        "source_url": final_state.get("transcript_url", ""),
-        "source": final_state.get("transcript_source", "Unknown"),
-        "steps": [msg.content for msg in final_state["messages"]],
-        "error": final_state.get("error", None)
-    }
+    "ticker": final_state["ticker"],
+    "quarter": final_state["quarter"],
+    "year": final_state["year"],
+    "time_period": f"{final_state['quarter']} {final_state['year']}",
+    "summary": final_state.get("summary", ""),
+    "transcript_content": final_state.get("transcript_content", ""),  # ADD THIS LINE
+    "source_url": final_state.get("transcript_url", ""),
+    "source": final_state.get("transcript_source", "Unknown"),
+    "steps": [msg.content for msg in final_state["messages"]],
+    "error": final_state.get("error", None)
+}
