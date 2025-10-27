@@ -322,5 +322,8 @@ Auto-Save Triggers:
 - **Tavily MCP (Model Context Protocol)** - Standardized tool integration for finance chat
 - **Tavily Direct API** - Direct web search for earnings transcript discovery
 - **OpenAI Function Calling** - Dynamic tool invocation based on query context
+- 
+## Techincal Documentation
+[Technical docs](https://drive.google.com/file/d/1Coyk0VxGKuWwsyow_PHayaTJemlkVz4W/view?usp=sharing)
 
 ## AWS
