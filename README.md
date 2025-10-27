@@ -1,6 +1,8 @@
 # FinHelp
 FinHelp is an intelligent financial analysis platform that combines conversational AI with real-time data retrieval to help investors, analysts, and finance enthusiasts make informed decisions. The platform offers two core capabilities: (1) an Earnings Call Analyzer that automatically searches for, extracts, and summarizes quarterly earnings call transcripts for any publicly-traded company, providing detailed insights on financial performance, forward guidance, and strategic initiatives; and (2) a Finance Chat interface that enables natural language conversations about companies, markets, and economic concepts, powered by live web search to ensure up-to-date information. Built on agentic AI principles using LangGraph workflows, FinHelp orchestrates multiple tools—including Tavily for web search, OpenAI GPT-4 for analysis, and MongoDB for persistent user context—to deliver comprehensive financial intelligence that goes beyond static data, allowing users to ask follow-up questions, compare multiple earnings reports, and maintain conversation history across sessions.
 
+![UI](GitHub_images/img.jpg)
+
 ## Use cases:
 - Quickly understand quarterly earnings without reading lengthy transcripts
 - Compare earnings performance across companies or time periods
