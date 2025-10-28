@@ -109,6 +109,7 @@ curl http://localhost:8000/health
 Once both servers are running, navigate to `http://localhost:3000` and create an account to start using FinHelp! 🎉
 
 ## Demo Video
+[Video Link](https://youtu.be/HXhJy0rGhT0)
 
 ## Workflow Explanation
 
